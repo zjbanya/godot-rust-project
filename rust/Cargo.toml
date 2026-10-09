@@ -1,6 +1,10 @@
 [package]
-name = "godot-rust-project"
+name = "godot_rust_project"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+godot = "0.5.5"
+
+[lib]
+crate-type = ["cdylib"] # 将此crate编译为动态C库 （dynamic C library）.
