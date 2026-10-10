@@ -1,10 +1,10 @@
 # Godot
-/godot/.godot/
-/godot/.import/
-/godot/android/
+.godot/
+.import/
+android/
 
 # Rust
-/rust/target/
+target/
 
 # IDE
 .vscode/
