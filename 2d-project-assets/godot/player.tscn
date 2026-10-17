@@ -5,7 +5,7 @@
 [sub_resource type="CircleShape2D" id="CircleShape2D_07orm"]
 radius = 47.67599
 
-[node name="CharacterBody2D" type="CharacterBody2D" unique_id=1358468503]
+[node name="Player" type="Player" unique_id=1358468503]
 
 [node name="HappyBoo" parent="." unique_id=1091727253 instance=ExtResource("1_4flbx")]
 
