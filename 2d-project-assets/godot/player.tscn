@@ -7,7 +7,6 @@
 radius = 18.965513
 
 [node name="Player" type="Player" unique_id=1358468503 groups=["player"]]
-speed = 500.0
 
 [node name="HappyBoo" parent="." unique_id=1091727253 instance=ExtResource("1_n4luv")]
 scale = Vector2(0.5600006, 0.5600006)
@@ -20,3 +19,4 @@ shape = SubResource("CircleShape2D_07orm")
 [node name="Camera2D" type="Camera2D" parent="." unique_id=1621307609]
 
 [node name="Gun" parent="." unique_id=570384292 instance=ExtResource("2_onrkg")]
+position = Vector2(0, -15)

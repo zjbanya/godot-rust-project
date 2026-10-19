@@ -13,5 +13,9 @@ impl IArea2D for Gun {
         Self {}
     }
 
-    fn physics_process(&mut self, _delta: f64) {}
+    fn physics_process(&mut self, _delta: f64) {
+
+    }
+
+
 }

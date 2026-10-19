@@ -39,7 +39,7 @@ impl ICharacterBody2D for Player {
     fn init(base: Base<CharacterBody2D>) -> Self {
         Self {
             base,
-            speed: 300.0,
+            speed: 100.0,
             happy_boo: None,
             is_walking: false,
         }
