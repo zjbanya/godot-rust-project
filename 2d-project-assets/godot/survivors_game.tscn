@@ -1,0 +1,49 @@
+[gd_scene format=3 uid="uid://swcb8q32cvqi"]
+
+[ext_resource type="PackedScene" uid="uid://c1sx7bic4uhdj" path="res://player.tscn" id="1_3cish"]
+[ext_resource type="PackedScene" uid="uid://dkijvxh1m4jpm" path="res://PineTree.tscn" id="2_y3pti"]
+[ext_resource type="PackedScene" uid="uid://exd8jplrjwad" path="res://mob.tscn" id="3_l26od"]
+
+[node name="Game" type="Node2D" unique_id=1418975052]
+y_sort_enabled = true
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=224301438]
+layer = -30
+
+[node name="ColorRect" type="ColorRect" parent="CanvasLayer" unique_id=1967395864]
+offset_right = 1156.0
+offset_bottom = 653.0
+
+[node name="Player" parent="." unique_id=1358468503 instance=ExtResource("1_3cish")]
+speed = 300.0
+position = Vector2(555, 326)
+
+[node name="Mob" parent="." unique_id=1357120806 instance=ExtResource("3_l26od")]
+position = Vector2(282, 290)
+
+[node name="PineTree" parent="." unique_id=1337847188 instance=ExtResource("2_y3pti")]
+position = Vector2(377, 475.99997)
+
+[node name="PineTree3" parent="." unique_id=1537463863 instance=ExtResource("2_y3pti")]
+position = Vector2(496.00003, 119.99994)
+
+[node name="PineTree4" parent="." unique_id=1217789519 instance=ExtResource("2_y3pti")]
+position = Vector2(496.00003, 119.99994)
+
+[node name="PineTree5" parent="." unique_id=136269509 instance=ExtResource("2_y3pti")]
+position = Vector2(823, 126.999985)
+
+[node name="PineTree6" parent="." unique_id=682682802 instance=ExtResource("2_y3pti")]
+position = Vector2(789, 184.99998)
+
+[node name="PineTree7" parent="." unique_id=268486027 instance=ExtResource("2_y3pti")]
+position = Vector2(875.00006, 170)
+
+[node name="PineTree8" parent="." unique_id=1794513167 instance=ExtResource("2_y3pti")]
+position = Vector2(956.00006, 351)
+
+[node name="PineTree9" parent="." unique_id=1069995445 instance=ExtResource("2_y3pti")]
+position = Vector2(754.00006, 475.99994)
+
+[node name="PineTree2" parent="." unique_id=1965890616 instance=ExtResource("2_y3pti")]
+position = Vector2(279, 189.99994)
