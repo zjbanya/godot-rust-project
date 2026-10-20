@@ -5,7 +5,9 @@
 [sub_resource type="CircleShape2D" id="CircleShape2D_07orm"]
 radius = 402.27478
 
-[node name="Gun" type="Area2D" unique_id=570384292]
+[node name="Gun" type="Gun" unique_id=570384292]
+collision_layer = 0
+collision_mask = 2
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=85339284]
 shape = SubResource("CircleShape2D_07orm")
