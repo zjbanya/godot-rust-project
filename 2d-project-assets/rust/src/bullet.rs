@@ -15,7 +15,7 @@ impl IArea2D for Bullet {
         Self { base }
     }
 
-    fn physics_process(&mut self, delta: f64) {}
+    fn physics_process(&mut self, _delta: f64) {}
 
     fn ready(&mut self) {}
 }
