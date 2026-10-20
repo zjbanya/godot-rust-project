@@ -12,6 +12,7 @@ collision_mask = 3
 metadata/_edit_group_ = true
 
 [node name="Slime" parent="." unique_id=2008890567 instance=ExtResource("1_dy6sc")]
+unique_name_in_owner = true
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=837369996]
 position = Vector2(0, -29)

@@ -1,41 +1,51 @@
-use godot::classes::{CharacterBody2D, ICharacterBody2D, Node2D};
+use godot::classes::{CharacterBody2D, ICharacterBody2D, Node, Node2D, PackedScene};
 use godot::prelude::*;
 
-/// 玩家所在的分组。分组是“当前存活玩家”的唯一事实来源。
+/// 玩家所在的分组。
 const PLAYER_GROUP: &str = "player";
 
-/// Slime 是 Mob 的直接子节点，负责动画表现。
+/// Slime 是 Mob 的直接子节点，层级里已经设置好。
 const SLIME_PATH: &str = "Slime";
 
 /// Slime 脚本暴露的方法名。
 const PLAY_WALK: &str = "play_walk";
 const PLAY_IDLE: &str = "play_idle";
+const PLAY_HURT: &str = "play_hurt";
 
-/// Mob 的行为状态。
+/// 死亡时生成的烟雾爆炸场景。
+const SMOKE_EXPLOSION_SCENE: &str = "res://smoke_explosion/smoke_explosion.tscn";
+
+/// hurt 动画的持续状态时间。只影响动画，不停止移动。
+const HURT_TIME: f64 = 0.3;
+
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum MobState {
     Idle,
     Walk,
+    Hurt,
 }
 
-/// 近战小怪：发现玩家后持续追击。
-///
-/// 这里刻意不缓存 `target: Gd<Node2D>`。
-/// 玩家死亡、重生、切换角色都会让旧指针失效；
-/// 与其每帧用 `is_instance_valid()` 兜底，不如每帧从分组里取当前存活目标。
+/// 近战小怪：发现玩家后持续追击，受击播放 hurt，生命归零后立即隐藏并释放。
 #[derive(GodotClass)]
 #[class(base = CharacterBody2D)]
 pub struct Mob {
     base: Base<CharacterBody2D>,
 
-    /// 移动速度，单位像素/秒。策划可以在检查器里直接调。
     #[export]
     speed: f32,
 
-    /// 缓存的 Slime 表现节点。它和 Mob 同生共死，生命周期是确定的。
+    #[export]
+    max_health: f32,
+
+    health: f32,
+
     slime: Option<Gd<Node2D>>,
 
     state: MobState,
+    hurt_timer: f64,
+    dead: bool,
+
+    smoke_explosion_scene: Option<Gd<PackedScene>>,
 }
 
 #[godot_api]
@@ -44,37 +54,58 @@ impl ICharacterBody2D for Mob {
         Self {
             base,
             speed: 85.0,
+            max_health: 30.0,
+            health: 30.0,
             slime: None,
             state: MobState::Idle,
+            hurt_timer: 0.0,
+            dead: false,
+            smoke_explosion_scene: None,
         }
     }
 
     fn ready(&mut self) {
-        self.slime = self.base().try_get_node_as::<Node2D>(SLIME_PATH);
-        if self.slime.is_none() {
-            godot_warn!("Mob 找不到子节点 `{SLIME_PATH}`，动画调用将被跳过");
-        }
+        self.health = self.max_health;
+
+        // 层级已固定，直接取节点；缺失时让错误尽早暴露。
+        self.slime = Some(self.base().get_node_as::<Node2D>(SLIME_PATH));
+        self.smoke_explosion_scene = Some(load::<PackedScene>(SMOKE_EXPLOSION_SCENE));
 
         self.play_animation(PLAY_IDLE);
     }
 
-    fn physics_process(&mut self, _delta: f64) {
-        // 只在这一帧内持有目标指针，不在帧与帧之间保存。
-        // 玩家被移除后会自动从分组里消失，因此不会拿到失效指针。
+    fn physics_process(&mut self, delta: f64) {
+        if self.dead {
+            return;
+        }
+
         let target = self.find_target();
 
-        let next_state = if target.is_some() {
-            MobState::Walk
-        } else {
-            MobState::Idle
-        };
-        self.set_state(next_state);
+        if self.hurt_timer > 0.0 {
+            self.hurt_timer -= delta;
 
+            if self.hurt_timer <= 0.0 {
+                let next_state = if target.is_some() {
+                    MobState::Walk
+                } else {
+                    MobState::Idle
+                };
+                self.set_state(next_state);
+            }
+        } else {
+            let next_state = if target.is_some() {
+                MobState::Walk
+            } else {
+                MobState::Idle
+            };
+            self.set_state(next_state);
+        }
+
+        // 受击期间也继续移动，不再停顿。
         let mut velocity = Vector2::ZERO;
         if let Some(target) = target {
             let offset = target.get_global_position() - self.base().get_global_position();
 
-            // 距离足够远才归一化，避免零向量和贴近目标时的抖动。
             if offset.length_squared() > 1.0 {
                 let direction = offset.normalized();
                 self.face(direction.x);
@@ -88,11 +119,59 @@ impl ICharacterBody2D for Mob {
     }
 }
 
+#[godot_api]
 impl Mob {
-    /// 从 `player` 分组取当前存活目标。
-    ///
-    /// 分组由场景树维护：节点被 `free()` 时会自动从分组移除。
-    /// 这次查询的结果只在当前物理帧内使用，所以不需要 `is_instance_valid()`。
+    #[func]
+    pub fn take_damage(&mut self, amount: f32) {
+        if self.dead || amount <= 0.0 {
+            return;
+        }
+
+        self.health = (self.health - amount).max(0.0);
+
+        if self.health <= 0.0 {
+            self.die();
+        } else {
+            self.hurt_timer = HURT_TIME;
+            self.state = MobState::Hurt;
+            self.play_animation(PLAY_HURT);
+        }
+    }
+}
+
+impl Mob {
+    fn die(&mut self) {
+        self.dead = true;
+
+        // 先放烟雾，再隐藏本体；本体立即释放，不在烟雾里停留。
+        self.spawn_death_effect();
+
+        let mut base = self.base_mut();
+        base.set_visible(false);
+        base.set_collision_layer(0);
+        base.set_collision_mask(0);
+        base.queue_free();
+    }
+
+    fn spawn_death_effect(&self) {
+        let Some(scene) = self.smoke_explosion_scene.clone() else {
+            return;
+        };
+        let Some(node) = scene.instantiate() else {
+            return;
+        };
+        let Ok(mut effect) = node.try_cast::<Node2D>() else {
+            return;
+        };
+
+        let Some(mut parent) = self.base().get_parent() else {
+            return;
+        };
+
+        parent.add_child(&effect.clone().upcast::<Node>());
+        effect.set_global_position(self.base().get_global_position() + Vector2::new(0.0, -20.0));
+    }
+
     fn find_target(&self) -> Option<Gd<Node2D>> {
         self.base()
             .get_tree()
@@ -109,17 +188,16 @@ impl Mob {
         match next_state {
             MobState::Idle => self.play_animation(PLAY_IDLE),
             MobState::Walk => self.play_animation(PLAY_WALK),
+            MobState::Hurt => self.play_animation(PLAY_HURT),
         }
     }
 
-    /// 调用 Slime 脚本里的无参方法。
     fn play_animation(&mut self, method: &str) {
         if let Some(slime) = self.slime.as_mut() {
             slime.call(method, &[]);
         }
     }
 
-    /// 根据水平移动方向翻转视觉节点，同时保留美术原始缩放。
     fn face(&mut self, direction_x: f32) {
         if direction_x.abs() < 0.01 {
             return;

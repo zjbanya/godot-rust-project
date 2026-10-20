@@ -1,72 +1,85 @@
-use godot::classes::{CharacterBody2D, ICharacterBody2D, Input, Node2D};
+use godot::classes::{Area2D, CharacterBody2D, ICharacterBody2D, Input, Node2D, ProgressBar};
 use godot::prelude::*;
 
 /// HappyBoo 是 Player 的直接子节点，路径相对于 Player。
 const HAPPY_BOO_PATH: &str = "HappyBoo";
+const HURT_BOX_PATH: &str = "HurtBox";
+const PROGRESS_BAR_PATH: &str = "ProgressBar";
 
-// GDScript 的方法存在于脚本实例里，Rust 只能通过方法名字符串在运行时查找。这也是动态调用的代价：方法名写错不会编译报错，只会在运行时出错
-// 这是学习 godot-rust 成本，而不是性能收益
-/// GDScript 里的方法名。集中成常量，避免字符串散落。
+/// GDScript 里的方法名。
 const PLAY_WALK: &str = "play_walk_animation";
 const PLAY_IDLE: &str = "play_idle_animation";
 
 /// 玩家角色。
-///
-/// `#[class(base = CharacterBody2D)]` 做两件事：
-/// 1. 告诉 gdext 这个 Rust 结构体继承 Godot 的 `CharacterBody2D`；
-/// 2. 把它注册成一个全局类，名字就是 `Player`，之后能在编辑器里直接使用。
 #[derive(GodotClass)]
 #[class(base = CharacterBody2D)]
 pub struct Player {
-    /// 必须持有基类，才能调用 `move_and_slide()` 等 Godot 方法。
     base: Base<CharacterBody2D>,
 
-    /// `#[export]` 会把字段暴露到 Godot 检查器里，
-    /// 调速度时改场景参数即可，不用重新编译 Rust。
     #[export]
     speed: f32,
 
-    /// 缓存 HappyBoo 节点，避免每帧都做一次场景树查找。
+    #[export]
+    max_health: f32,
+
+    /// 单个 Slime 每秒造成的伤害。
+    #[export]
+    contact_damage_per_second: f32,
+
+    health: f32,
+
+    dead: bool,
+
     happy_boo: Option<Gd<Node2D>>,
 
-    /// 记录上一帧是否在移动，用来做状态边沿检测。
+    hurt_box: Option<Gd<Area2D>>,
+
+    progress_bar: Option<Gd<ProgressBar>>,
+
     is_walking: bool,
 }
 
 #[godot_api]
 impl ICharacterBody2D for Player {
-    /// 对应 GDScript 的 `_init()`，节点创建时调用一次。
     fn init(base: Base<CharacterBody2D>) -> Self {
         Self {
             base,
             speed: 130.0,
+            max_health: 100.0,
+            contact_damage_per_second: 4.0,
+            health: 100.0,
+            dead: false,
             happy_boo: None,
+            hurt_box: None,
+            progress_bar: None,
             is_walking: false,
         }
     }
 
-    /// 对应 GDScript 的 `_ready()`：节点进入场景树后调用一次。
-    /// 在这里解析并缓存子节点，比每帧查找更划算。
     fn ready(&mut self) {
-        self.happy_boo = self.base().try_get_node_as::<Node2D>(HAPPY_BOO_PATH);
-        if self.happy_boo.is_none() {
-            godot_warn!("Player 找不到子节点 `{HAPPY_BOO_PATH}`，动画调用将被跳过");
-        }
+        self.health = self.max_health;
+
+        self.happy_boo = Some(self.base().get_node_as::<Node2D>(HAPPY_BOO_PATH));
+        self.hurt_box = Some(self.base().get_node_as::<Area2D>(HURT_BOX_PATH));
+        self.progress_bar = Some(self.base().get_node_as::<ProgressBar>(PROGRESS_BAR_PATH));
+
         self.play_animation(PLAY_IDLE);
+        self.update_health_ui();
     }
 
-    /// 对应 GDScript 的 `_physics_process(delta)`。
-    ///
-    /// 物理相关逻辑放这里，而不是 `_process`：
-    /// 它以固定频率运行，移动和碰撞结果更稳定、可复现。
-    fn physics_process(&mut self, _delta: f64) {
-        // 一次拿到归一化后的输入向量：
-        // 引擎会自动处理死区，并保证斜向移动不会比直线更快。
+    fn physics_process(&mut self, delta: f64) {
+        if self.dead {
+            let mut base = self.base_mut();
+            base.set_velocity(Vector2::ZERO);
+            base.move_and_slide();
+            return;
+        }
+
+        self.apply_contact_damage(delta);
+
         let direction =
             Input::singleton().get_vector("move_left", "move_right", "move_up", "move_down");
 
-        // 只在“开始移动 / 停止移动”的瞬间切动画。
-        // 如果每帧都调用 play()，动画会被反复重置到第 0 帧。
         let is_walking = !direction.is_zero_approx();
         if is_walking != self.is_walking {
             self.is_walking = is_walking;
@@ -74,22 +87,73 @@ impl ICharacterBody2D for Player {
             self.play_animation(method);
         }
 
-        // 速度单位是“像素/秒”，move_and_slide() 内部会按物理帧长换算，
-        // 所以这里不需要再乘 delta。
         let velocity = direction * self.speed;
 
         let mut base = self.base_mut();
         base.set_velocity(velocity);
-        // 由 CharacterBody2D 负责沿墙滑动和处理碰撞。
         base.move_and_slide();
     }
 }
 
+#[godot_api]
 impl Player {
-    /// 调用 HappyBoo 脚本里的无参方法。
-    ///
-    /// Rust 在编译期不知道 GDScript 有哪些方法，所以只能用 `call()`
-    /// 传方法名字符串；名字写错只会在运行时暴露。
+    /// 生命值归零时发出。GameOver 逻辑可以连接到这个信号。
+    #[signal]
+    fn health_depleted();
+
+    /// 扣除生命值。HurtBox 的接触伤害和未来其他伤害源都走这里。
+    #[func]
+    pub fn take_damage(&mut self, amount: f32) {
+        if self.dead || amount <= 0.0 {
+            return;
+        }
+
+        self.health = (self.health - amount).max(0.0);
+        self.update_health_ui();
+
+        if self.health <= 0.0 {
+            self.dead = true;
+
+            if let Some(mut hurt_box) = self.hurt_box.clone() {
+                hurt_box.set_monitoring(false);
+            }
+
+            self.signals().health_depleted().emit();
+        }
+    }
+}
+
+impl Player {
+    /// 每个贴身 Slime 每帧持续造成伤害，总伤害 = 单怪 DPS × 数量。
+    fn apply_contact_damage(&mut self, delta: f64) {
+        let damage = {
+            let Some(hurt_box) = self.hurt_box.as_ref() else {
+                return;
+            };
+
+            let count = hurt_box.get_overlapping_bodies().len() as f32;
+            if count <= 0.0 {
+                return;
+            }
+
+            self.contact_damage_per_second * count * delta as f32
+        };
+
+        self.take_damage(damage);
+    }
+
+    /// 满血时隐藏血条，掉血后显示。
+    fn update_health_ui(&mut self) {
+        let Some(progress_bar) = self.progress_bar.as_mut() else {
+            return;
+        };
+
+        let max_health = self.max_health.max(1.0);
+        progress_bar.set_max(max_health as f64);
+        progress_bar.set_value(self.health as f64);
+        progress_bar.set_visible(self.health < self.max_health);
+    }
+
     fn play_animation(&mut self, method: &str) {
         if let Some(happy_boo) = self.happy_boo.as_mut() {
             happy_boo.call(method, &[]);

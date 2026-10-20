@@ -1,25 +1,32 @@
-use godot::{
-    classes::{Area2D, IArea2D, Marker2D, Sprite2D},
-    prelude::*,
-};
+use godot::classes::{Area2D, IArea2D, Marker2D, Node, PackedScene, Sprite2D};
+use godot::prelude::*;
+
+use crate::bullet::Bullet;
 
 const WEAPON_PIVOT_PATH: &str = "WeaponPivot";
 const PISTOL_PATH: &str = "WeaponPivot/Pistol";
+const SHOOTING_POINT_PATH: &str = "%ShootingPoint";
 
-/// 武器朝向控制器。
+/// 子弹场景。Timer 的 timeout 触发时从这里实例化。
+const BULLET_SCENE: &str = "res://bullet.tscn";
+
+/// 武器控制器。
 ///
-/// 职责只有两件事：
-/// 1. 在 Area2D 的重叠体里找最近的 Mob；
-/// 2. 让 WeaponPivot 指向它，并按左右方向翻转手枪贴图。
-///
-/// 不缓存目标：`get_overlapping_bodies()` 每帧返回当前有效的物理体，
-/// 目标死亡或离开范围后自然消失，不需要 `is_instance_valid()`。
+/// 职责：
+/// 1. 每物理帧指向最近的 Mob；
+/// 2. Timer.timeout 时在 ShootingPoint 生成一颗 Bullet。
 #[derive(GodotClass)]
 #[class(base = Area2D)]
-struct Gun {
+pub struct Gun {
     base: Base<Area2D>,
+
     weapon_pivot: Option<Gd<Marker2D>>,
+
     pistol: Option<Gd<Sprite2D>>,
+
+    shooting_point: Option<Gd<Marker2D>>,
+
+    bullet_scene: Option<Gd<PackedScene>>,
 }
 
 #[godot_api]
@@ -27,27 +34,67 @@ impl IArea2D for Gun {
     fn init(base: Base<Area2D>) -> Self {
         Self {
             base,
-            // 枪口旋转轴。它是 Gun 的子节点，生命周期确定，可以安全缓存。
             weapon_pivot: None,
-            // 手枪贴图。Y 翻转作用在它身上。
             pistol: None,
+            shooting_point: None,
+            bullet_scene: None,
         }
     }
 
     fn ready(&mut self) {
-        self.weapon_pivot = self.base().try_get_node_as::<Marker2D>(WEAPON_PIVOT_PATH);
-        self.pistol = self.base().try_get_node_as::<Sprite2D>(PISTOL_PATH);
-
-        if self.weapon_pivot.is_none() {
-            godot_warn!("Gun 缺少子节点 `{WEAPON_PIVOT_PATH}`, 无法旋转枪口");
-        }
-        if self.pistol.is_none() {
-            godot_warn!("Gun 缺少子节点 `{WEAPON_PIVOT_PATH}`, 无法旋转枪口");
-        }
+        self.weapon_pivot = Some(self.base().get_node_as::<Marker2D>(WEAPON_PIVOT_PATH));
+        self.pistol = Some(self.base().get_node_as::<Sprite2D>(PISTOL_PATH));
+        self.shooting_point = Some(self.base().get_node_as::<Marker2D>(SHOOTING_POINT_PATH));
+        self.bullet_scene = Some(load::<PackedScene>(BULLET_SCENE));
     }
 
     fn physics_process(&mut self, _delta: f64) {
         self.aim_at_nearest_mob();
+    }
+}
+
+#[godot_api]
+impl Gun {
+    /// 由 gun.tscn 里的 Timer.timeout 信号调用。
+    #[func]
+    fn on_shoot_timeout(&mut self) {
+        // 先保证枪口朝向当前目标，再按新方向生成子弹。
+        self.aim_at_nearest_mob();
+
+        let Some(target) = self.find_nearest_mob() else {
+            return;
+        };
+        let (Some(point), Some(scene)) = (self.shooting_point.clone(), self.bullet_scene.clone())
+        else {
+            return;
+        };
+
+        let spawn_position = point.get_global_position();
+        let direction = (target.get_global_position() - spawn_position).normalized();
+
+        if direction == Vector2::ZERO {
+            return;
+        }
+
+        let Some(node) = scene.instantiate() else {
+            return;
+        };
+        let Ok(mut bullet) = node.try_cast::<Bullet>() else {
+            return;
+        };
+
+        let Some(mut parent) = self
+            .base()
+            .get_tree()
+            .get_current_scene()
+            .or_else(|| self.base().get_parent())
+        else {
+            return;
+        };
+
+        parent.add_child(&bullet.clone().upcast::<Node>());
+        bullet.set_global_position(spawn_position);
+        bullet.bind_mut().launch(direction);
     }
 }
 
@@ -83,7 +130,7 @@ impl Gun {
         nearest.map(|(_, body)| body)
     }
 
-    /// 指向最近的 Mob。没有目标时保持当前朝向
+    /// 指向最近的 Mob。没有目标时保持当前朝向。
     fn aim_at_nearest_mob(&mut self) {
         let Some(target) = self.find_nearest_mob() else {
             return;
@@ -95,14 +142,12 @@ impl Gun {
         let target_position = target.get_global_position();
         let direction = target_position - pivot.get_global_position();
 
-        // 目标与枪口重合时没有有效朝向，跳过这一帧。
         if direction.length_squared() < 1.0 {
             return;
         }
 
         pivot.look_at(target_position);
 
-        // 目标在左侧时翻转贴图，避免手枪上下颠倒。
         if let Some(pistol) = self.pistol.as_mut() {
             pistol.set_flip_v(direction.x < 0.0);
         }
