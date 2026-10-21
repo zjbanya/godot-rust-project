@@ -1,10 +1,11 @@
-use godot::classes::{INode2D, Node, Node2D, PackedScene, PathFollow2D};
+use godot::classes::{CanvasLayer, INode2D, Node, Node2D, PackedScene, PathFollow2D};
 use godot::prelude::*;
 
 use crate::mob::Mob;
 
 const MOB_SCENE: &str = "res://mob.tscn";
 const PATH_FOLLOW_PATH: &str = "%PathFollow2D";
+const GAME_OVER_PATH: &str = "GameOver";
 
 /// 主场景控制器：按 Timer 的节奏，在 PathFollow2D 的随机位置生成 Mob。
 #[derive(GodotClass)]
@@ -14,6 +15,7 @@ pub struct Game {
 
     path_follow: Option<Gd<PathFollow2D>>,
     mob_scene: Option<Gd<PackedScene>>,
+    game_over: Option<Gd<CanvasLayer>>,
 }
 
 #[godot_api]
@@ -23,17 +25,30 @@ impl INode2D for Game {
             base,
             path_follow: None,
             mob_scene: None,
+            game_over: None,
         }
     }
 
     fn ready(&mut self) {
         self.path_follow = Some(self.base().get_node_as::<PathFollow2D>(PATH_FOLLOW_PATH));
         self.mob_scene = Some(load::<PackedScene>(MOB_SCENE));
+        self.game_over = Some(self.base().get_node_as::<CanvasLayer>(GAME_OVER_PATH));
     }
 }
 
 #[godot_api]
 impl Game {
+    /// 由 Player.health_depleted 信号调用。
+    #[func]
+    fn on_player_health_depleted(&mut self) {
+        if let Some(mut game_over) = self.game_over.clone() {
+            game_over.set_visible(true);
+        }
+
+        // 暂停整棵场景树，Player、Mob 和生成 Timer 都会停止。
+        self.base().get_tree().set_pause(true);
+    }
+
     /// 由 survivors_game.tscn 里的 Timer.timeout 信号调用。
     #[func]
     fn spawn_mob(&mut self) {
